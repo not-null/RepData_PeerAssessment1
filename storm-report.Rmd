@@ -1,0 +1,175 @@
+---
+output:
+  html_document:
+    fig_height: 8
+    fig_width: 15
+---
+# Reproducible Research - Exploring & Analyzing NOAA Storm Database
+### Author: Himanshu Rawat
+### Date: 20th June, 2015
+
+******
+
+- [Synopsis](#synopsis)
+- [Data Processing](#data-processing)
+    - [FATALITIES Processing](#fatalities-processing)
+    - [INJURIES Processing](#injuries-processing)
+    - [ECONOMIC Processing](#economic-processing)
+- [Results](#results)
+
+***********
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(clean=FALSE)
+```
+
+## Synopsis
+
+The basic goal of this assignment is to explore NOAA Storm Database for the severity of the weather events. We will also answer below questions:
+
+* Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+* Across the United States, which types of events have the greatest economic consequences?
+
+[Storm Data](http://d396qusza40orc.cloudfront.net/repDF%2FDF%2FStormDF.csv.bz2)
+
+## Data Processing
+
+I am assuminng data has been downloaded and extracted via above link and configured correct current working directory.  
+Load neccessary packages.
+```{r}
+library(package = "plyr", warn.conflicts = FALSE, quietly = TRUE)
+library(package = "dplyr", warn.conflicts = FALSE, quietly = TRUE)
+library(package = "ggplot2", warn.conflicts = FALSE, quietly = TRUE)
+```
+Simple read of CSV file as we need to see all the variables. I will limit to 10 rows.
+```{r}
+storm.data <- read.csv(file ="repdata_data_StormData.csv", nrow = 10)
+str(storm.data)
+```
+Our raw storm data consists of <span style="color:red;">`37`</span> columns but we are interested in <span style="color:red;">`8`</span> columns i.e.
+
+Variale name    |   Description
+----------      |   ------------
+STATE           |   Two letter code
+EVTYPE          |   Weather event source type (tornado,avalanche,ice-storm etc.)    
+FATALITIES      |   Count of weather event related fatalities
+INJURIES        |   Count of weather event related injuries
+PROPDMG         |   Property damage (scaled value)
+PROPDMGEXP      |   Unit of measure for the PROPDMG
+CROPDMG         |   Crop damage (scaled value)
+CROPDMGEXP      |   Unit of measure for CROPDMG
+
+Lets read only above columns
+```{r}
+columns.to.read <- c(rep("NULL",6), rep("character",2) , 
+                        rep("NULL",14),rep("numeric",3),"character","numeric","character", rep("NULL",9))
+
+storm.data <- read.csv(file ="repdata_data_StormData.csv", colClasses = columns.to.read , nrow = 1232705)
+```
+### Pre process the data for simplifications
+```{r}
+# for every state, get the total counts of each event type
+new.storm <- storm.data %>% group_by(STATE,EVTYPE) %>% summarise(fatal.count = sum(FATALITIES), injur.count = sum(INJURIES), total.count = sum(FATALITIES + INJURIES))
+```
+Harmful events across the states w.r.t population health can be divided into two parts
+
+1. FATALITIES
+2. INJURIES
+
+Economic consequences will use below columns
+
+1. PROPDMG
+2. PROPDMGEXP
+3. CROPDMG
+4. CROPDMGEXP
+
+### <span style="color:red;">`FATALITIES`</span> Processing
+```{r}
+# get the event have max count and remove duplicates
+fatal <- new.storm %>% top_n(n = 1, wt = fatal.count) %>% distinct()
+# summarise the total count of each event. This will give us unqiue fatalities.
+fatal.new <- fatal %>% group_by(EVTYPE) %>% summarise(total.count = sum (fatal.count))
+# sort them in decreasing order
+fatal.new <- fatal.new[order(fatal.new$total.count, decreasing = TRUE),]
+fatal.new
+```
+### <span style="color:red;">`FATALITIES`</span> plot
+```{r}
+g <- ggplot(data = fatal.new, aes(x = fatal.new$EVTYPE, y = fatal.new$total.count, fill=fatal.new$EVTYPE)) 
+g <- g + geom_bar(stat = "identity") + scale_fill_hue(c=45, l=80)
+g <- g + geom_text(aes(label = fatal.new$total.count, y = fatal.new$total.count))
+g <- g + coord_flip()
+g <- g + scale_fill_discrete(name="Event")
+g <- g + xlab("Event Type") +  ylab("Fatalities Count") 
+g <- g + theme_bw()
+g
+```
+
+### <span style="color:red;">`INJURIES`</span> Processing
+
+```{r}
+# get the event have max count and remove duplicates
+injur <- new.storm %>% top_n(n = 1, wt = injur.count) %>% distinct()
+# summarise the total count of each event. This will give us unqiue injuries.
+injur.new <- injur %>% group_by(EVTYPE) %>% summarise(total.count = sum (injur.count))
+# sort them in decreasing order
+injur.new <- injur.new[order(injur.new$total.count, decreasing = TRUE),]
+injur.new
+```
+### <span style="color:red;">`INJURIES`</span> plot
+```{r}
+g <- ggplot(data = injur.new, aes(x = injur.new$EVTYPE, y = injur.new$total.count, fill=injur.new$EVTYPE)) 
+g <- g + geom_bar(stat = "identity") + scale_fill_hue(c=45, l=80)
+g <- g + geom_text(aes(label = injur.new$total.count, y = injur.new$total.count))
+g <- g + coord_flip()
+g <- g + scale_fill_discrete(name="Event")
+g <- g + xlab("Event Type") +  ylab("Injuries Count") 
+g <- g + theme_bw()
+g
+```
+Both plots clearly shows that the most harmful event to the human population health is <span style="color:red;">`TORNADO`</span>.
+
+### <span style="color:red;">`ECONOMIC`</span> Processing
+
+For each event, I will sum individual calculation of property and crop damages.
+```{r}
+eco.data <- storm.data %>% select(EVTYPE,PROPDMG,PROPDMGEXP,CROPDMG,CROPDMGEXP)
+
+# change the values as per below
+# "","+","-","?" = 1 (for consistency purpose)
+# "0","1","2","3","4","5","6","7","8" = 10 (for consistency purpose))
+# H|h = 100
+# K|k = 1000
+# M|m = 1000000
+# B|b = 1000000000
+
+eco.data$PROPDMGEXP <- mapvalues(eco.data$PROPDMGEXP, from = c("","+","-","0","1","2","3","4","5","6","7","8","?","B","H","K","M","h","m"), to = c("1","1","1","10","10","10","10","10","10","10","10","10","1","1000000000","100","1000","1000000","100","1000000"))
+
+eco.data$CROPDMGEXP <- mapvalues(eco.data$CROPDMGEXP, from = c("","M","K","m","B","?","0","k","2"), to = c("1","1000000","1000","1000000","1000000000","1","10","1000","10"))
+
+eco.data <- mutate(eco.data, prop.damage = PROPDMG * as.numeric(PROPDMGEXP), crop.damage = CROPDMG * as.numeric(CROPDMGEXP), total.damage = prop.damage + crop.damage)
+
+eco.damage <- aggregate(total.damage ~ EVTYPE, data = eco.data, FUN = sum )
+eco.damage <- arrange(df = eco.damage, desc(eco.damage$total.damage))
+
+top.20 <- eco.damage[1:20,]
+top.20
+```
+### <span style="color:red;">`Economic`</span> plot 
+```{r}
+g <- ggplot(data = top.20, aes(x = top.20$EVTYPE, y = top.20$total.damage/1000000000, fill=top.20$EVTYPE)) 
+g <- g + geom_bar(stat = "identity") + scale_fill_hue(c=45, l=80)
+g <- g + coord_flip()
+g <- g + scale_fill_discrete(name="Event")
+g <- g + xlab("Event Type") +  ylab("Total Damage Billion ($)") 
+g <- g + theme_bw()
+g
+```
+
+### Results
+
+1. Events <span style="color:red;">`Tornado, Excessive Heat, Heat`</span> are most harmful w.r.t population health 
+2. Events <span style="color:red;">`Flood, Hurricane/Typhoon, Tornado, Storm Surge`</span> cause greatest economic consequences.
+
+*******
